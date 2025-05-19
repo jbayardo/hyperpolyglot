@@ -134,17 +134,104 @@ impl Detection {
 /// assert_eq!(Detection::Heuristics("Rust"), language);
 /// ```
 pub fn detect(path: &Path) -> Result<Option<Detection>, std::io::Error> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    detect_from_reader(path, reader)
+}
+
+/// Detects the programming language using a provided path and explicit filename
+///
+/// This function allows detecting a language when you have the filename separately from the path,
+/// which can be useful in situations where the filename might be different from the actual path.
+///
+/// If the language cannot be determined, None will be returned.
+///
+/// # Examples
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use hyperpolyglot::{detect_with_filename, Detection};
+///
+/// let path = Path::new("src/bin/main.rs");
+/// let language = detect_with_filename(path, "custom_name.rs").unwrap().unwrap();
+/// assert_eq!(Detection::Extension("Rust"), language);
+/// ```
+pub fn detect_with_filename(
+    path: &Path,
+    filename: &str,
+) -> Result<Option<Detection>, std::io::Error> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    detect_from_reader_with_filename(reader, filename)
+}
+
+/// Detects the programming language of a file using a pre-created reader
+///
+/// This function allows detecting a language from a path and pre-opened reader,
+/// which can be useful when the file is already open.
+///
+/// If the language cannot be determined, None will be returned.
+///
+/// # Examples
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use hyperpolyglot::{detect_from_reader, Detection};
+///
+/// let path = Path::new("src/bin/main.rs");
+/// let file = File::open(path).unwrap();
+/// let reader = BufReader::new(file);
+/// let language = detect_from_reader(path, reader).unwrap().unwrap();
+/// assert_eq!(Detection::Heuristics("Rust"), language);
+/// ```
+pub fn detect_from_reader<R: Read + Seek>(
+    path: &Path,
+    reader: BufReader<R>,
+) -> Result<Option<Detection>, std::io::Error> {
     let filename = match path.file_name() {
         Some(filename) => filename.to_str(),
         None => return Ok(None),
     };
 
-    let candidate = filename.and_then(|filename| detectors::get_language_from_filename(filename));
+    if let Some(filename) = filename {
+        detect_from_reader_with_filename(reader, filename)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Detects the programming language using a pre-created reader and explicit filename
+///
+/// This function allows detecting a language when you have the filename separately from the path,
+/// and with a pre-opened reader, which can be useful in custom scenarios.
+///
+/// If the language cannot be determined, None will be returned.
+///
+/// # Examples
+/// ```
+/// use std::path::Path;
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use hyperpolyglot::{detect_from_reader_with_filename, Detection};
+///
+/// let path = Path::new("src/bin/main.rs");
+/// let file = File::open(path).unwrap();
+/// let reader = BufReader::new(file);
+/// let language = detect_from_reader_with_filename(path, reader, "custom_name.rs").unwrap().unwrap();
+/// assert_eq!(Detection::Extension("Rust"), language);
+/// ```
+pub fn detect_from_reader_with_filename<R: Read + Seek>(
+    mut reader: BufReader<R>,
+    filename: &str,
+) -> Result<Option<Detection>, std::io::Error> {
+    let candidate = detectors::get_language_from_filename(filename);
     if let Some(candidate) = candidate {
         return Ok(Some(Detection::Filename(candidate)));
     };
 
-    let extension = filename.and_then(|filename| detectors::get_extension(filename));
+    let extension = detectors::get_extension(filename);
 
     let candidates = extension
         .map(|ext| detectors::get_languages_from_extension(ext))
@@ -153,9 +240,6 @@ pub fn detect(path: &Path) -> Result<Option<Detection>, std::io::Error> {
     if candidates.len() == 1 {
         return Ok(Some(Detection::Extension(candidates[0])));
     };
-
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
 
     let candidates = filter_candidates(
         candidates,
@@ -191,18 +275,6 @@ pub fn detect(path: &Path) -> Result<Option<Detection>, std::io::Error> {
             &content,
             &candidates,
         )))),
-    }
-}
-
-// function stolen from from https://doc.rust-lang.org/nightly/src/core/str/mod.rs.html
-fn truncate_to_char_boundary(s: &str, mut max: usize) -> &str {
-    if max >= s.len() {
-        s
-    } else {
-        while !s.is_char_boundary(max) {
-            max -= 1;
-        }
-        &s[..max]
     }
 }
 
@@ -286,6 +358,18 @@ fn filter_candidates(
     match filtered_candidates.len() {
         0 => previous_candidates,
         _ => filtered_candidates,
+    }
+}
+
+// function stolen from from https://doc.rust-lang.org/nightly/src/core/str/mod.rs.html
+fn truncate_to_char_boundary(s: &str, mut max: usize) -> &str {
+    if max >= s.len() {
+        s
+    } else {
+        while !s.is_char_boundary(max) {
+            max -= 1;
+        }
+        &s[..max]
     }
 }
 
